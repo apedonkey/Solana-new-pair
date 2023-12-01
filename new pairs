@@ -1,0 +1,75 @@
+use actix_cors::Cors;
+use actix_web::{http::header, web, App, HttpServer, Responder, HttpResponse};
+use serde::{Deserialize, Serialize};
+use reqwest::Client as HttpClient;
+use async_trait::async_trait;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Pair {
+    id: String,
+    name: String,
+    price: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Database {
+    pairs: HashMap<String, Pair>,
+}
+
+impl Database {
+    fn new() -> Self {
+        Self {
+            pairs: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, pair: Pair) {
+        self.pairs.insert(pair.id.clone(), pair);
+    }
+
+    fn get_all(&self) -> Vec<&Pair> {
+        self.pairs.values().collect()
+    }
+}
+
+struct AppState {
+    db: Mutex<Database>
+}
+
+async fn fetch_pairs(app_state: web::Data<AppState>) -> impl Responder {
+    let mut db: std::sync::MutexGuard<Database> = app_state.db.lock().unwrap();
+    let pairs = db.get_all();
+    HttpResponse::Ok().json(pairs)
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+
+    let db: Database = Database::new();
+
+    let data: web::Data<AppState> = web::Data::new(AppState {
+        db: Mutex::new(db)
+    });
+
+    HttpServer::new(move || {
+        App::new()
+            .wrap(
+                Cors::permissive()
+                    .allowed_origin_fn(|origin, _req_head| {
+                        origin.as_bytes().starts_with(b"http://localhost") || origin == "null"
+                    })
+                    .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
+                    .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
+                    .allowed_header(header::CONTENT_TYPE)
+                    .supports_credentials()
+                    .max_age(3600)
+            )
+            .app_data(data.clone())
+            .route("/pairs", web::get().to(fetch_pairs))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
+}
